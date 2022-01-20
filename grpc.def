@@ -155,6 +155,7 @@ EXPORTS
     grpc_tls_credentials_options_watch_identity_key_cert_pairs
     grpc_tls_credentials_options_set_identity_cert_name
     grpc_tls_credentials_options_set_cert_request_type
+    grpc_tls_credentials_options_set_crl_directory
     grpc_tls_credentials_options_set_verify_server_cert
     grpc_tls_credentials_options_set_check_call_host
     grpc_xds_credentials_create
@@ -162,6 +163,7 @@ EXPORTS
     grpc_authorization_policy_provider_static_data_create
     grpc_authorization_policy_provider_file_watcher_create
     grpc_authorization_policy_provider_release
+    grpc_tls_credentials_options_set_tls_session_key_log_file_path
     grpc_raw_byte_buffer_create
     grpc_raw_compressed_byte_buffer_create
     grpc_byte_buffer_copy
