@@ -11,3 +11,6 @@ brew install coreutils
 
 # Git archiving tool
 brew install git-archive-all
+
+# Skip lint during pod trunk push
+./scripts/skip_pod_push_lint.sh
