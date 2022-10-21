@@ -20,9 +20,9 @@ from doctest import SKIP
 import multiprocessing
 import os
 import re
-import subprocess
 import sys
-import tempfile
+
+import run_buildozer
 
 # find our home
 ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), '../..'))
@@ -85,6 +85,8 @@ EXTERNAL_DEPS = {
         'absl/meta:type_traits',
     'absl/random/random.h':
         'absl/random',
+    'absl/random/distributions.h':
+        'absl/random:distributions',
     'absl/status/status.h':
         'absl/status',
     'absl/status/statusor.h':
@@ -262,6 +264,15 @@ num_opted_out_cc_libraries = 0
 parsing_path = None
 
 
+# Convert the source or header target to a relative path.
+def _get_filename(name, parsing_path):
+    filename = '%s%s' % (
+        (parsing_path + '/' if
+         (parsing_path and not name.startswith('//')) else ''), name)
+    filename = filename.replace('//:', '')
+    return filename.replace('//src/core:', 'src/core/')
+
+
 def grpc_cc_library(name,
                     hdrs=[],
                     public_hdrs=[],
@@ -294,19 +305,18 @@ def grpc_cc_library(name,
         proto_hdr = '%s%s' % ((parsing_path + '/' if parsing_path else ''),
                               proto.replace('.proto', '.pb.h'))
         skip_headers[name].add(proto_hdr)
+
     for hdr in hdrs + public_hdrs:
-        filename = '%s%s' % ((parsing_path + '/' if parsing_path else ''), hdr)
-        vendors[filename].append(name)
+        vendors[_get_filename(hdr, parsing_path)].append(name)
     inc = set()
     original_deps[name] = frozenset(deps)
     original_external_deps[name] = frozenset(external_deps)
     for src in hdrs + public_hdrs + srcs:
-        filename = '%s%s' % ((parsing_path + '/' if parsing_path else ''), src)
-        for line in open(filename):
-            m = re.search(r'#include <(.*)>', line)
+        for line in open(_get_filename(src, parsing_path)):
+            m = re.search(r'^#include <(.*)>', line)
             if m:
                 inc.add(m.group(1))
-            m = re.search(r'#include "(.*)"', line)
+            m = re.search(r'^#include "(.*)"', line)
             if m:
                 inc.add(m.group(1))
             if 'grpc::g_glip' in line or 'grpc::g_core_codegen_interface' in line:
@@ -393,6 +403,8 @@ args = parser.parse_args()
 
 for dirname in [
         "",
+        "src/core",
+        "src/cpp/ext/gcp",
         "test/core/uri",
         "test/core/util",
         "test/core/end2end",
@@ -405,7 +417,7 @@ for dirname in [
             'load': lambda filename, *args: None,
             'licenses': lambda licenses: None,
             'package': lambda **kwargs: None,
-            'exports_files': lambda files: None,
+            'exports_files': lambda files, visibility=None: None,
             'config_setting': lambda **kwargs: None,
             'selects': FakeSelects(),
             'python_config_settings': lambda **kwargs: None,
@@ -415,6 +427,7 @@ for dirname in [
             'grpc_fuzzer': grpc_cc_library,
             'grpc_proto_fuzzer': grpc_cc_library,
             'select': lambda d: d["//conditions:default"],
+            'glob': lambda files: None,
             'grpc_end2end_tests': lambda: None,
             'grpc_upb_proto_library': lambda name, **kwargs: None,
             'grpc_upb_proto_reflection_library': lambda name, **kwargs: None,
@@ -495,7 +508,10 @@ class Choices:
             choices = new_choices
 
         best = None
-        final_scorer = lambda x: (total_avoidness(x), scorer(x), total_score(x))
+
+        def final_scorer(x):
+            return (total_avoidness(x), scorer(x), total_score(x))
+
         for choice in choices:
             if best is None or final_scorer(choice) < final_scorer(best):
                 best = choice
@@ -594,9 +610,6 @@ def make_library(library):
               (hdr, library))
         error = True
 
-    if library in needs_codegen_base_src:
-        deps.add('grpc++_codegen_base_src', '#needs_codegen_base_src')
-
     deps.remove(library)
 
     deps = sorted(
@@ -626,15 +639,7 @@ for library, lib_error, deps, external_deps in updated_libraries:
     buildozer_set_list('external_deps', external_deps, library, via='deps')
     buildozer_set_list('deps', deps, library)
 
-if buildozer_commands:
-    ok_statuses = (0, 3)
-    temp = tempfile.NamedTemporaryFile()
-    open(temp.name, 'w').write('\n'.join(buildozer_commands))
-    c = ['tools/distrib/buildozer.sh', '-f', temp.name]
-    r = subprocess.call(c)
-    if r not in ok_statuses:
-        print('{} failed with status {}'.format(c, r))
-        sys.exit(1)
+run_buildozer.run_buildozer(buildozer_commands)
 
 if error:
     sys.exit(1)

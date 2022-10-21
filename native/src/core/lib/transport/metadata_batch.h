@@ -40,7 +40,7 @@
 
 #include "src/core/lib/compression/compression_internal.h"
 #include "src/core/lib/gprpp/chunked_vector.h"
-#include "src/core/lib/gprpp/table.h"
+#include "src/core/lib/gprpp/packed_table.h"
 #include "src/core/lib/gprpp/time.h"
 #include "src/core/lib/resource_quota/arena.h"
 #include "src/core/lib/slice/slice.h"
@@ -93,7 +93,7 @@ struct ContentTypeMetadata {
   // gRPC says that content-type can be application/grpc[;something]
   // Core has only ever verified the prefix.
   // IF we want to start verifying more, we can expand this type.
-  enum ValueType {
+  enum ValueType : uint8_t {
     kApplicationGrpc,
     kEmpty,
     kInvalid,
@@ -112,7 +112,7 @@ struct ContentTypeMetadata {
 // scheme metadata trait.
 struct HttpSchemeMetadata {
   static constexpr bool kRepeatable = false;
-  enum ValueType {
+  enum ValueType : uint8_t {
     kHttp,
     kHttps,
     kInvalid,
@@ -134,7 +134,7 @@ struct HttpSchemeMetadata {
 // method metadata trait.
 struct HttpMethodMetadata {
   static constexpr bool kRepeatable = false;
-  enum ValueType {
+  enum ValueType : uint8_t {
     kPost,
     kGet,
     kPut,
@@ -387,6 +387,14 @@ struct GrpcStatusContext {
   static const std::string& DisplayValue(const std::string& x);
 };
 
+// Annotation added by a transport to note that the status came from the wire.
+struct GrpcStatusFromWire {
+  static absl::string_view DebugKey() { return "GrpcStatusFromWire"; }
+  static constexpr bool kRepeatable = false;
+  using ValueType = bool;
+  static absl::string_view DisplayValue(bool x) { return x ? "true" : "false"; }
+};
+
 // Annotation added by client surface code to denote wait-for-ready state
 struct WaitForReady {
   struct ValueType {
@@ -498,7 +506,7 @@ class ParseHelper {
     return ParsedMetadata<Container>(
         trait,
         ParseValueToMemento<typename Trait::MementoType, Trait::ParseMemento>(),
-        transport_size_);
+        static_cast<uint32_t>(transport_size_));
   }
 
   GPR_ATTRIBUTE_NOINLINE ParsedMetadata<Container> NotFound(
@@ -643,6 +651,13 @@ struct AdaptDisplayValueToLog<std::string> {
 template <>
 struct AdaptDisplayValueToLog<const std::string&> {
   static std::string ToString(const std::string& value) { return value; }
+};
+
+template <>
+struct AdaptDisplayValueToLog<absl::string_view> {
+  static std::string ToString(absl::string_view value) {
+    return std::string(value);
+  }
 };
 
 template <>
@@ -1045,7 +1060,9 @@ class MetadataMap {
   //    void Encode(string_view key, Slice value);
   template <typename Encoder>
   void Encode(Encoder* encoder) const {
-    table_.ForEach(metadata_detail::EncodeWrapper<Encoder>{encoder});
+    table_.template ForEachIn<metadata_detail::EncodeWrapper<Encoder>,
+                              Value<Traits>...>(
+        metadata_detail::EncodeWrapper<Encoder>{encoder});
     for (const auto& unk : unknown_) {
       encoder->Encode(unk.first, unk.second);
     }
@@ -1222,7 +1239,7 @@ class MetadataMap {
   using Value = metadata_detail::Value<Which>;
 
   // Table of known metadata types.
-  Table<Value<Traits>...> table_;
+  PackedTable<Value<Traits>...> table_;
   metadata_detail::UnknownMap unknown_;
 };
 
@@ -1299,7 +1316,8 @@ using grpc_metadata_batch_base = grpc_core::MetadataMap<
     grpc_core::LbCostBinMetadata, grpc_core::LbTokenMetadata,
     // Non-encodable things
     grpc_core::GrpcStreamNetworkState, grpc_core::PeerString,
-    grpc_core::GrpcStatusContext, grpc_core::WaitForReady>;
+    grpc_core::GrpcStatusContext, grpc_core::GrpcStatusFromWire,
+    grpc_core::WaitForReady>;
 
 struct grpc_metadata_batch : public grpc_metadata_batch_base {
   using grpc_metadata_batch_base::grpc_metadata_batch_base;

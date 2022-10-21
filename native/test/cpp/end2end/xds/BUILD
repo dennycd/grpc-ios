@@ -33,8 +33,6 @@ grpc_cc_library(
         "//:gpr",
         "//:grpc",
         "//:grpc++",
-        "//src/proto/grpc/testing/xds:ads_for_test_proto",
-        "//src/proto/grpc/testing/xds:lrs_for_test_proto",
         "//src/proto/grpc/testing/xds/v3:ads_proto",
         "//src/proto/grpc/testing/xds/v3:cluster_proto",
         "//src/proto/grpc/testing/xds/v3:discovery_proto",
@@ -73,8 +71,6 @@ grpc_cc_library(
         "//src/proto/grpc/testing:echo_messages_proto",
         "//src/proto/grpc/testing:echo_proto",
         "//src/proto/grpc/testing/duplicate:echo_duplicate_proto",
-        "//src/proto/grpc/testing/xds:ads_for_test_proto",
-        "//src/proto/grpc/testing/xds:lrs_for_test_proto",
         "//src/proto/grpc/testing/xds/v3:ads_proto",
         "//src/proto/grpc/testing/xds/v3:cluster_proto",
         "//src/proto/grpc/testing/xds/v3:discovery_proto",
@@ -125,9 +121,6 @@ grpc_cc_test(
         "//src/proto/grpc/testing:echo_messages_proto",
         "//src/proto/grpc/testing:echo_proto",
         "//src/proto/grpc/testing/duplicate:echo_duplicate_proto",
-        "//src/proto/grpc/testing/xds:cds_for_test_proto",
-        "//src/proto/grpc/testing/xds:eds_for_test_proto",
-        "//src/proto/grpc/testing/xds:lds_rds_for_test_proto",
         "//src/proto/grpc/testing/xds/v3:aggregate_cluster_proto",
         "//src/proto/grpc/testing/xds/v3:cluster_proto",
         "//src/proto/grpc/testing/xds/v3:endpoint_proto",
@@ -166,7 +159,7 @@ grpc_cc_test(
         "//:grpc",
         "//:grpc++",
         "//test/core/util:grpc_test_util",
-        "//test/cpp/end2end:connection_delay_injector",
+        "//test/cpp/end2end:connection_attempt_injector",
     ],
 )
 
@@ -191,7 +184,7 @@ grpc_cc_test(
         "//:grpc_resolver_fake",
         "//src/proto/grpc/testing/xds/v3:aggregate_cluster_proto",
         "//test/core/util:grpc_test_util",
-        "//test/cpp/end2end:connection_delay_injector",
+        "//test/cpp/end2end:connection_attempt_injector",
     ],
 )
 
@@ -202,6 +195,7 @@ grpc_cc_test(
     external_deps = [
         "gtest",
     ],
+    flaky = True,
     linkstatic = True,  # Fixes dyld error on MacOS
     shard_count = 15,
     tags = [
@@ -214,6 +208,7 @@ grpc_cc_test(
         "//:grpc",
         "//:grpc++",
         "//test/core/util:grpc_test_util",
+        "//test/core/util:scoped_env_var",
     ],
 )
 
@@ -250,6 +245,7 @@ grpc_cc_test(
     external_deps = [
         "gtest",
     ],
+    flaky = True,
     linkstatic = True,  # Fixes dyld error on MacOS
     shard_count = 5,
     tags = [
@@ -276,6 +272,7 @@ grpc_cc_test(
     external_deps = [
         "gtest",
     ],
+    flaky = True,
     linkstatic = True,  # Fixes dyld error on MacOS
     tags = [
         "no_test_ios",
@@ -319,7 +316,7 @@ grpc_cc_test(
         "//src/proto/grpc/testing/xds/v3:listener_proto",
         "//src/proto/grpc/testing/xds/v3:route_proto",
         "//test/core/util:grpc_test_util",
-        "//test/cpp/end2end:connection_delay_injector",
+        "//test/cpp/end2end:connection_attempt_injector",
     ],
 )
 
@@ -343,6 +340,7 @@ grpc_cc_test(
         "//src/proto/grpc/lookup/v1:rls_config_proto",
         "//src/proto/grpc/lookup/v1:rls_proto",
         "//test/core/util:grpc_test_util",
+        "//test/core/util:scoped_env_var",
         "//test/cpp/end2end:rls_server",
     ],
 )
