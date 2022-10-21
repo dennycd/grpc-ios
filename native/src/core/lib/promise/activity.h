@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/base/thread_annotations.h"
@@ -32,7 +33,6 @@
 
 #include <grpc/support/log.h>
 
-#include "src/core/lib/gpr/tls.h"
 #include "src/core/lib/gprpp/construct_destruct.h"
 #include "src/core/lib/gprpp/no_destruct.h"
 #include "src/core/lib/gprpp/orphanable.h"
@@ -44,6 +44,8 @@
 
 namespace grpc_core {
 
+class Activity;
+
 // A Wakeable object is used by queues to wake activities.
 class Wakeable {
  public:
@@ -53,19 +55,23 @@ class Wakeable {
   // Drop this wakeable without waking up the underlying activity.
   virtual void Drop() = 0;
 
+  // Return the underlying activity debug tag, or "<unknown>" if not available.
+  virtual std::string ActivityDebugTag() const = 0;
+
  protected:
   inline ~Wakeable() {}
 };
 
-namespace activity_detail {
+namespace promise_detail {
 struct Unwakeable final : public Wakeable {
   void Wakeup() override {}
   void Drop() override {}
+  std::string ActivityDebugTag() const override;
 };
 static Unwakeable* unwakeable() {
   return NoDestructSingleton<Unwakeable>::Get();
 }
-}  // namespace activity_detail
+}  // namespace promise_detail
 
 class AtomicWaker;
 
@@ -74,7 +80,7 @@ class AtomicWaker;
 class Waker {
  public:
   explicit Waker(Wakeable* wakeable) : wakeable_(wakeable) {}
-  Waker() : Waker(activity_detail::unwakeable()) {}
+  Waker() : Waker(promise_detail::unwakeable()) {}
   ~Waker() { wakeable_->Drop(); }
   Waker(const Waker&) = delete;
   Waker& operator=(const Waker&) = delete;
@@ -96,11 +102,15 @@ class Waker {
     return wakeable_ == other.wakeable_;
   }
 
+  std::string ActivityDebugTag() {
+    return wakeable_ == nullptr ? "<unknown>" : wakeable_->ActivityDebugTag();
+  }
+
  private:
   friend class AtomicWaker;
 
   Wakeable* Take() {
-    return absl::exchange(wakeable_, activity_detail::unwakeable());
+    return std::exchange(wakeable_, promise_detail::unwakeable());
   }
 
   Wakeable* wakeable_;
@@ -110,7 +120,7 @@ class Waker {
 class AtomicWaker {
  public:
   explicit AtomicWaker(Wakeable* wakeable) : wakeable_(wakeable) {}
-  AtomicWaker() : AtomicWaker(activity_detail::unwakeable()) {}
+  AtomicWaker() : AtomicWaker(promise_detail::unwakeable()) {}
   explicit AtomicWaker(Waker waker) : AtomicWaker(waker.Take()) {}
   ~AtomicWaker() { wakeable_.load(std::memory_order_acquire)->Drop(); }
   AtomicWaker(const AtomicWaker&) = delete;
@@ -124,7 +134,7 @@ class AtomicWaker {
   // Return true if there is a not-unwakeable wakeable present.
   bool Armed() const noexcept {
     return wakeable_.load(std::memory_order_relaxed) !=
-           activity_detail::unwakeable();
+           promise_detail::unwakeable();
   }
 
   // Set to some new waker
@@ -134,7 +144,7 @@ class AtomicWaker {
 
  private:
   Wakeable* Take() {
-    return wakeable_.exchange(activity_detail::unwakeable(),
+    return wakeable_.exchange(promise_detail::unwakeable(),
                               std::memory_order_acq_rel);
   }
 
@@ -180,6 +190,9 @@ class Activity : public Orphanable {
   // delivered until long after the activity should be destroyed.
   virtual Waker MakeNonOwningWaker() = 0;
 
+  // Some descriptive text to add to log messages to identify this activity.
+  virtual std::string DebugTag() const;
+
  protected:
   // Check if this activity is the current activity executing on the current
   // thread.
@@ -204,7 +217,7 @@ class Activity : public Orphanable {
  private:
   // Set during RunLoop to the Activity that's executing.
   // Being set implies that mu_ is held.
-  static GPR_THREAD_LOCAL(Activity*) g_current_activity_;
+  static thread_local Activity* g_current_activity_;
 };
 
 // Owned pointer to one Activity.
@@ -263,7 +276,10 @@ class ActivityContexts : public ContextHolder<Contexts>... {
     explicit ScopedContext(ActivityContexts* contexts)
         : Context<ContextTypeFromHeld<Contexts>>(
               static_cast<ContextHolder<Contexts>*>(contexts)
-                  ->GetContext())... {}
+                  ->GetContext())... {
+      // Silence `unused-but-set-parameter` in case of Contexts = {}
+      (void)contexts;
+    }
   };
 };
 
@@ -315,7 +331,7 @@ class FreestandingActivity : public Activity, private Wakeable {
   // Check if we got an internal wakeup since the last time this function was
   // called.
   ActionDuringRun GotActionDuringRun() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-    return absl::exchange(action_during_run_, ActionDuringRun::kNone);
+    return std::exchange(action_during_run_, ActionDuringRun::kNone);
   }
 
   // Implementors of Wakeable::Wakeup should call this after the wakeup has
@@ -330,6 +346,8 @@ class FreestandingActivity : public Activity, private Wakeable {
   }
 
   Mutex* mu() ABSL_LOCK_RETURNED(mu_) { return &mu_; }
+
+  std::string ActivityDebugTag() const override { return DebugTag(); }
 
  private:
   class Handle;
@@ -436,7 +454,11 @@ class PromiseActivity final : public FreestandingActivity,
       MutexLock lock(mu());
       // Check if we were done, and flag done.
       was_done = done_;
-      if (!done_) MarkDone();
+      if (!done_) {
+        ScopedActivity scoped_activity(this);
+        ScopedContext contexts(this);
+        MarkDone();
+      }
     }
     // If we were not done, then call the on_done callback.
     if (!was_done) {
@@ -473,8 +495,8 @@ class PromiseActivity final : public FreestandingActivity,
   // Notification that we're no longer executing - it's ok to destruct the
   // promise.
   void MarkDone() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu()) {
-    GPR_ASSERT(!done_);
-    done_ = true;
+    GPR_ASSERT(!absl::exchange(done_, true));
+    ScopedContext contexts(this);
     Destruct(&promise_holder_.promise);
   }
 

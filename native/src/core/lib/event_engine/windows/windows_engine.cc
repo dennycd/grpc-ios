@@ -26,7 +26,6 @@
 #include <grpc/event_engine/memory_allocator.h>
 #include <grpc/event_engine/slice_buffer.h>
 
-#include "src/core/lib/event_engine/executor/threaded_executor.h"
 #include "src/core/lib/event_engine/handle_containers.h"
 #include "src/core/lib/event_engine/posix_engine/timer_manager.h"
 #include "src/core/lib/event_engine/trace.h"
@@ -61,7 +60,10 @@ struct WindowsEventEngine::Closure final : public EventEngine::Closure {
   }
 };
 
-WindowsEventEngine::WindowsEventEngine() : iocp_(&executor_) {
+WindowsEventEngine::WindowsEventEngine()
+    : executor_(std::make_shared<ThreadPool>()),
+      iocp_(executor_.get()),
+      timer_manager_(executor_) {
   WSADATA wsaData;
   int status = WSAStartup(MAKEWORD(2, 0), &wsaData);
   GPR_ASSERT(status == 0);
@@ -78,6 +80,8 @@ WindowsEventEngine::~WindowsEventEngine() {
   }
   GPR_ASSERT(GPR_LIKELY(known_handles_.empty()));
   GPR_ASSERT(WSACleanup() == 0);
+  timer_manager_.Shutdown();
+  executor_->Quiesce();
 }
 
 bool WindowsEventEngine::Cancel(EventEngine::TaskHandle handle) {
@@ -101,11 +105,11 @@ EventEngine::TaskHandle WindowsEventEngine::RunAfter(
 }
 
 void WindowsEventEngine::Run(absl::AnyInvocable<void()> closure) {
-  executor_.Run(std::move(closure));
+  executor_->Run(std::move(closure));
 }
 
 void WindowsEventEngine::Run(EventEngine::Closure* closure) {
-  executor_.Run(closure);
+  executor_->Run(closure);
 }
 
 EventEngine::TaskHandle WindowsEventEngine::RunAfterInternal(

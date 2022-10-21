@@ -77,6 +77,9 @@ grpc_cc_library(
 grpc_cc_test(
     name = "posix_event_engine_test",
     srcs = ["posix_event_engine_test.cc"],
+    tags = [
+        "no_windows",
+    ],
     uses_polling = False,
     deps = [
         "//:posix_event_engine",
@@ -121,8 +124,10 @@ grpc_cc_library(
     srcs = ["oracle_event_engine_posix.cc"],
     hdrs = ["oracle_event_engine_posix.h"],
     tags = [
+        "cpu:10",
         "no_windows",
     ],
+    visibility = ["//test:__subpackages__"],
     deps = [
         ":conformance_test_base_lib",
         "//:grpc",
@@ -162,6 +167,7 @@ grpc_cc_library(
     ],
     hdrs = COMMON_HEADERS,
     external_deps = ["gtest"],
+    visibility = ["@grpc:public"],
     deps = [
         "//:grpc",
         "//test/core/util:grpc_test_util",
